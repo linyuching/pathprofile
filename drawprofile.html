@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GeoTIFF DEM 多段折線高程剖面工具</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/geotiff/dist-browser/geotiff.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Microsoft JhengHei", sans-serif;
+      background: #f5f7fb;
+      color: #222;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      height: 100vh;
+      gap: 10px;
+      padding: 10px;
+    }
+
+    .panel {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      padding: 14px;
+      overflow: hidden;
+    }
+
+    .controls {
+      overflow: auto;
+    }
+
+    .right-area {
+      display: grid;
+      grid-template-rows: 1fr 320px;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    .right-area.dem-only {
+      grid-template-rows: 1fr 0px;
+    }
+
+    .right-area.chart-only {
+      grid-template-rows: 0px 1fr;
+    }
+
+    .right-area.split-view {
+      grid-template-rows: 1fr 320px;
+    }
+
+    .viewer-panel,
+    .chart-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      transition: all 0.25s ease;
+    }
+
+    .collapsed {
+      padding-top: 8px;
+      padding-bottom: 8px;
+      min-height: 52px !important;
+    }
+
+    .collapsed .panel-body {
+      display: none;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .panel-header h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .panel-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .panel-body {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .canvas-wrap {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      background: #ddd;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+    }
+
+    canvas#demCanvas {
+      display: block;
+      background: #fff;
+      cursor: crosshair;
+    }
+
+    .chart-wrap {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+
+    h2, h3 {
+      margin-top: 0;
+    }
+
+    label {
+      display: block;
+      margin-top: 10px;
+      font-weight: 600;
+    }
+
+    input[type="file"],
+    input[type="number"],
+    button {
+      width: 100%;
+      margin-top: 6px;
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+
+    button {
+      border: none;
+      border-radius: 8px;
+      background: #1f6feb;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #1859be;
+    }
+
+    button.secondary {
+      background: #6c757d;
+    }
+
+    button.secondary:hover {
+      background: #58626a;
+    }
+
+    button.warning {
+      background: #dc3545;
+    }
+
+    button.warning:hover {
+      background: #b72a38;
+    }
+
+    button.dark {
+      background: #343a40;
+    }
+
+    button.dark:hover {
+      background: #23272b;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .row3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .small {
+      font-size: 12px;
+      color: #555;
+      line-height: 1.6;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 13px;
+    }
+
+    th, td {
+      border: 1px solid #ddd;
+      padding: 6px;
+      text-align: right;
+    }
+
+    th:first-child, td:first-child {
+      text-align: center;
+    }
+
+    .status {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #eef7ee;
+      color: #245c2a;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .view-mode-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .mini-btn {
+      width: auto;
+      margin-top: 0;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .hidden-panel {
+      overflow: hidden;
+      padding-top: 8px !important;
+      padding-bottom: 8px !important;
+    }
+
+    .hidden-panel .panel-body {
+      display: none;
+    }
+
+    @media (max-width: 1100px) {
+      .app {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+      }
+
+      .controls {
+        max-height: 40vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="panel controls">
+      <h2>DEM 多段折線高程剖面工具</h2>
+
+      <label>載入 GeoTIFF DEM</label>
+      <input type="file" id="fileInput" accept=".tif,.tiff" />
+
+      <label>取樣間距（公尺）</label>
+      <input type="number" id="sampleStep" value="1" min="0.1" step="0.1" />
+
+      <label>圖表垂直留白比例</label>
+      <input type="number" id="verticalScaleHint" value="1" min="0.1" step="0.1" />
+
+      <div class="row3" style="margin-top:10px;">
+        <button id="startDrawBtn">開始畫折線</button>
+        <button id="finishDrawBtn" class="secondary">完成折線</button>
+        <button id="undoBtn" class="secondary">復原最後點</button>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <button id="profileBtn">產生剖面圖</button>
+        <button id="clearBtn" class="warning">清除折線</button>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <button id="csvBtn" class="secondary">匯出 CSV</button>
+        <button id="closeLineBtn" class="secondary">閉合折線</button>
+      </div>
+
+      <div class="view-mode-buttons">
+        <button id="showDemOnlyBtn" class="dark">只看 DEM</button>
+        <button id="showChartOnlyBtn" class="dark">只看剖面圖</button>
+        <button id="showSplitBtn" class="dark">恢復雙視窗</button>
+      </div>
+
+      <div class="status" id="statusText">狀態：等待載入檔案</div>
+
+      <h3 style="margin-top:18px;">操作方式</h3>
+      <div class="small">
+        1. 載入 GeoTIFF DEM。<br>
+        2. 按「開始畫折線」。<br>
+        3. 在 DEM 上連續點擊多個節點。<br>
+        4. 按「完成折線」。<br>
+        5. 按「產生剖面圖」。<br><br>
+
+        補充：<br>
+        - 可用「復原最後點」修正。<br>
+        - 可切換成只看 DEM 或只看剖面圖。<br>
+        - 本版預設 DEM 平面座標單位為公尺。<br>
+      </div>
+
+      <h3 style="margin-top:18px;">取樣摘要</h3>
+      <table>
+        <tbody>
+          <tr><th>折線總長</th><td id="lineLenCell">-</td></tr>
+          <tr><th>節點數</th><td id="vertexCountCell">-</td></tr>
+          <tr><th>樣本數</th><td id="sampleCountCell">-</td></tr>
+          <tr><th>最低高程</th><td id="minZCell">-</td></tr>
+          <tr><th>最高高程</th><td id="maxZCell">-</td></tr>
+          <tr><th>高差</th><td id="reliefCell">-</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="right-area split-view" id="rightArea">
+      <div class="panel viewer-panel" id="viewerPanel">
+        <div class="panel-header">
+          <h3>DEM 顯示與多段折線</h3>
+          <div class="panel-actions">
+            <button id="toggleViewerBtn" class="mini-btn secondary">收合 DEM</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="canvas-wrap">
+            <canvas id="demCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel chart-panel" id="chartPanel">
+        <div class="panel-header">
+          <h3>高程剖面圖</h3>
+          <div class="panel-actions">
+            <button id="toggleChartBtn" class="mini-btn secondary">收合剖面圖</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="chart-wrap">
+            <canvas id="profileChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const sampleStepInput = document.getElementById("sampleStep");
+    const verticalScaleHintInput = document.getElementById("verticalScaleHint");
+
+    const startDrawBtn = document.getElementById("startDrawBtn");
+    const finishDrawBtn = document.getElementById("finishDrawBtn");
+    const undoBtn = document.getElementById("undoBtn");
+    const profileBtn = document.getElementById("profileBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const csvBtn = document.getElementById("csvBtn");
+    const closeLineBtn = document.getElementById("closeLineBtn");
+
+    const showDemOnlyBtn = document.getElementById("showDemOnlyBtn");
+    const showChartOnlyBtn = document.getElementById("showChartOnlyBtn");
+    const showSplitBtn = document.getElementById("showSplitBtn");
+
+    const toggleViewerBtn = document.getElementById("toggleViewerBtn");
+    const toggleChartBtn = document.getElementById("toggleChartBtn");
+
+    const rightArea = document.getElementById("rightArea");
+    const viewerPanel = document.getElementById("viewerPanel");
+    const chartPanel = document.getElementById("chartPanel");
+
+    const statusText = document.getElementById("statusText");
+
+    const lineLenCell = document.getElementById("lineLenCell");
+    const vertexCountCell = document.getElementById("vertexCountCell");
+    const sampleCountCell = document.getElementById("sampleCountCell");
+    const minZCell = document.getElementById("minZCell");
+    const maxZCell = document.getElementById("maxZCell");
+    const reliefCell = document.getElementById("reliefCell");
+
+    const canvas = document.getElementById("demCanvas");
+    const ctx = canvas.getContext("2d");
+    const chartCanvas = document.getElementById("profileChart");
+
+    let dem = {
+      width: 0,
+      height: 0,
+      values: null,
+      noData: null,
+      bbox: null,
+      min: null,
+      max: null,
+      xOrigin: null,
+      yOrigin: null,
+      xRes: null,
+      yRes: null
+    };
+
+    let display = {
+      scale: 1
+    };
+
+    let drawingMode = false;
+    let polylinePoints = [];
+    let isClosed = false;
+    let profileData = [];
+    let profileChart = null;
+    let hoverPoint = null;
+
+    function setStatus(msg) {
+      statusText.textContent = "狀態：" + msg;
+    }
+
+    function resetSummary() {
+      lineLenCell.textContent = "-";
+      vertexCountCell.textContent = "-";
+      sampleCountCell.textContent = "-";
+      minZCell.textContent = "-";
+      maxZCell.textContent = "-";
+      reliefCell.textContent = "-";
+    }
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function formatNum(v, d = 3) {
+      if (v === null || v === undefined || Number.isNaN(v)) return "-";
+      return Number(v).toFixed(d);
+    }
+
+    function getCanvasMousePos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: evt.clientX - rect.left,
+        y: evt.clientY - rect.top
+      };
+    }
+
+    function canvasToRaster(px, py) {
+      return {
+        x: px / display.scale,
+        y: py / display.scale
+      };
+    }
+
+    function rasterIndex(col, row) {
+      return row * dem.width + col;
+    }
+
+    function getRasterValueNearest(col, row) {
+      const c = Math.round(col);
+      const r = Math.round(row);
+      if (c < 0 || c >= dem.width || r < 0 || r >= dem.height) return null;
+      const z = dem.values[rasterIndex(c, r)];
+      if (dem.noData !== null && z === dem.noData) return null;
+      if (!Number.isFinite(z)) return null;
+      return z;
+    }
+
+    function getRasterValueBilinear(col, row) {
+      const x0 = Math.floor(col);
+      const y0 = Math.floor(row);
+      const x1 = x0 + 1;
+      const y1 = y0 + 1;
+
+      if (x0 < 0 || y0 < 0 || x1 >= dem.width || y1 >= dem.height) {
+        return getRasterValueNearest(col, row);
+      }
+
+      const q11 = getRasterValueNearest(x0, y0);
+      const q21 = getRasterValueNearest(x1, y0);
+      const q12 = getRasterValueNearest(x0, y1);
+      const q22 = getRasterValueNearest(x1, y1);
+
+      const vals = [q11, q21, q12, q22];
+      const valid = vals.filter(v => v !== null);
+      if (valid.length === 0) return null;
+      if (valid.length < 4) {
+        return valid.reduce((a, b) => a + b, 0) / valid.length;
+      }
+
+      const dx = col - x0;
+      const dy = row - y0;
+
+      const r1 = q11 * (1 - dx) + q21 * dx;
+      const r2 = q12 * (1 - dx) + q22 * dx;
+      return r1 * (1 - dy) + r2 * dy;
+    }
+
+    function computeDisplayScale() {
+      const maxViewerWidth = 1400;
+      const maxViewerHeight = 900;
+      const sx = maxViewerWidth / dem.width;
+      const sy = maxViewerHeight / dem.height;
+      display.scale = Math.max(1, Math.floor(Math.min(sx, sy)));
+      if (!Number.isFinite(display.scale) || display.scale < 1) {
+        display.scale = 1;
+      }
+    }
+
+    function drawCanvas() {
+      if (!dem.values) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+
+      const imgCanvas = document.createElement("canvas");
+      imgCanvas.width = dem.width;
+      imgCanvas.height = dem.height;
+      const imgCtx = imgCanvas.getContext("2d");
+      const imgData = imgCtx.createImageData(dem.width, dem.height);
+
+      const min = dem.min;
+      const max = dem.max;
+      const range = (max - min) || 1;
+
+      for (let i = 0; i < dem.values.length; i++) {
+        const z = dem.values[i];
+        const idx = i * 4;
+
+        if ((dem.noData !== null && z === dem.noData) || !Number.isFinite(z)) {
+          imgData.data[idx + 3] = 0;
+        } else {
+          let gray = Math.round(((z - min) / range) * 255);
+          gray = clamp(gray, 0, 255);
+          imgData.data[idx + 0] = gray;
+          imgData.data[idx + 1] = gray;
+          imgData.data[idx + 2] = gray;
+          imgData.data[idx + 3] = 255;
+        }
+      }
+
+      imgCtx.putImageData(imgData, 0, 0);
+
+      canvas.width = Math.round(dem.width * display.scale);
+      canvas.height = Math.round(dem.height * display.scale);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(imgCanvas, 0, 0, canvas.width, canvas.height);
+
+      drawPolylineOverlay();
+    }
+
+    function drawPolylineOverlay() {
+      if (polylinePoints.length === 0) return;
+
+      ctx.save();
+
+      if (polylinePoints.length >= 2) {
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(polylinePoints[0].x, polylinePoints[0].y);
+        for (let i = 1; i < polylinePoints.length; i++) {
+          ctx.lineTo(polylinePoints[i].x, polylinePoints[i].y);
+        }
+        if (isClosed && polylinePoints.length >= 3) {
+          ctx.lineTo(polylinePoints[0].x, polylinePoints[0].y);
+        }
+        ctx.stroke();
+      }
+
+      if (drawingMode && hoverPoint && polylinePoints.length >= 1) {
+        const last = polylinePoints[polylinePoints.length - 1];
+        ctx.strokeStyle = "rgba(255,0,0,0.5)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(hoverPoint.x, hoverPoint.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      for (let i = 0; i < polylinePoints.length; i++) {
+        const p = polylinePoints[i];
+        ctx.beginPath();
+        ctx.fillStyle = (i === 0) ? "lime" : "yellow";
+        ctx.strokeStyle = "black";
+        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    async function loadGeoTIFF(file) {
+      setStatus("載入 GeoTIFF 中...");
+      resetSummary();
+      profileData = [];
+      polylinePoints = [];
+      isClosed = false;
+      drawingMode = false;
+      hoverPoint = null;
+
+      if (profileChart) {
+        profileChart.destroy();
+        profileChart = null;
+      }
+
+      const arrayBuffer = await file.arrayBuffer();
+      const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+      const image = await tiff.getImage();
+
+      const width = image.getWidth();
+      const height = image.getHeight();
+      const bbox = image.getBoundingBox();
+      const noData = image.getGDALNoData();
+      const raster = await image.readRasters({ interleave: true });
+
+      let min = Infinity;
+      let max = -Infinity;
+      for (let i = 0; i < raster.length; i++) {
+        const v = raster[i];
+        if (noData !== null && String(v) === String(noData)) continue;
+        if (!Number.isFinite(v)) continue;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+
+      const xRes = (bbox[2] - bbox[0]) / width;
+      const yRes = (bbox[3] - bbox[1]) / height;
+
+      dem = {
+        width,
+        height,
+        values: raster,
+        noData: noData !== null ? Number(noData) : null,
+        bbox,
+        min,
+        max,
+        xOrigin: bbox[0],
+        yOrigin: bbox[3],
+        xRes,
+        yRes: Math.abs(yRes)
+      };
+
+      computeDisplayScale();
+      drawCanvas();
+      setStatus(`DEM 載入完成（${width} × ${height}）`);
+    }
+
+    function canvasPixelToMapXY(px, py) {
+      const r = canvasToRaster(px, py);
+      return {
+        mapX: dem.xOrigin + r.x * dem.xRes,
+        mapY: dem.yOrigin - r.y * dem.yRes
+      };
+    }
+
+    function mapXYToRaster(mapX, mapY) {
+      return {
+        rx: (mapX - dem.xOrigin) / dem.xRes,
+        ry: (dem.yOrigin - mapY) / dem.yRes
+      };
+    }
+
+    function getPolylineVerticesMap() {
+      return polylinePoints.map(p => {
+        const m = canvasPixelToMapXY(p.x, p.y);
+        return { x: m.mapX, y: m.mapY };
+      });
+    }
+
+    function getSegmentLength(a, b) {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function getTotalPolylineLength(vertices) {
+      let total = 0;
+      for (let i = 0; i < vertices.length - 1; i++) {
+        total += getSegmentLength(vertices[i], vertices[i + 1]);
+      }
+      return total;
+    }
+
+    function sampleProfileAlongPolyline() {
+      if (polylinePoints.length < 2) {
+        alert("請先畫至少兩個點形成折線");
+        return;
+      }
+      if (!dem.values) {
+        alert("請先載入 DEM");
+        return;
+      }
+
+      const step = parseFloat(sampleStepInput.value);
+      if (!Number.isFinite(step) || step <= 0) {
+        alert("請輸入正確的取樣間距");
+        return;
+      }
+
+      const vertices = getPolylineVerticesMap();
+      const results = [];
+      let cumulativeDistance = 0;
+      let sampleId = 1;
+
+      for (let seg = 0; seg < vertices.length - 1; seg++) {
+        const a = vertices[seg];
+        const b = vertices[seg + 1];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const segLen = Math.sqrt(dx * dx + dy * dy);
+
+        if (segLen === 0) continue;
+
+        const dirX = dx / segLen;
+        const dirY = dy / segLen;
+
+        let startOffset = 0;
+        if (seg > 0) startOffset = step;
+
+        for (let d = startOffset; d <= segLen + 1e-9; d += step) {
+          const distOnSeg = Math.min(d, segLen);
+          const x = a.x + dirX * distOnSeg;
+          const y = a.y + dirY * distOnSeg;
+
+          const { rx, ry } = mapXYToRaster(x, y);
+          const z = getRasterValueBilinear(rx, ry);
+
+          results.push({
+            id: sampleId++,
+            segment: seg + 1,
+            distance: cumulativeDistance + distOnSeg,
+            x,
+            y,
+            z
+          });
+        }
+
+        const lastSampleDist = results.length ? results[results.length - 1].distance : 0;
+        cumulativeDistance += segLen;
+
+        const needEndpoint =
+          results.length === 0 ||
+          Math.abs(lastSampleDist - cumulativeDistance) > 1e-6;
+
+        if (needEndpoint) {
+          const { rx, ry } = mapXYToRaster(b.x, b.y);
+          const z = getRasterValueBilinear(rx, ry);
+          results.push({
+            id: sampleId++,
+            segment: seg + 1,
+            distance: cumulativeDistance,
+            x: b.x,
+            y: b.y,
+            z
+          });
+        }
+      }
+
+      profileData = results;
+      updateSummary(vertices, results);
+      drawProfileChart(results);
+      setStatus("多段折線剖面取樣完成");
+    }
+
+    function updateSummary(vertices, results) {
+      const totalLen = getTotalPolylineLength(vertices);
+      const validZ = results.map(r => r.z).filter(v => v !== null && Number.isFinite(v));
+      const minZ = validZ.length ? Math.min(...validZ) : null;
+      const maxZ = validZ.length ? Math.max(...validZ) : null;
+
+      lineLenCell.textContent = formatNum(totalLen, 3) + " m";
+      vertexCountCell.textContent = vertices.length;
+      sampleCountCell.textContent = results.length;
+      minZCell.textContent = minZ === null ? "-" : formatNum(minZ, 3) + " m";
+      maxZCell.textContent = maxZ === null ? "-" : formatNum(maxZ, 3) + " m";
+      reliefCell.textContent = (minZ === null || maxZ === null) ? "-" : formatNum(maxZ - minZ, 3) + " m";
+    }
+
+    function drawProfileChart(results) {
+      const labels = results.map(r => r.distance.toFixed(2));
+      const data = results.map(r => r.z);
+
+      if (profileChart) {
+        profileChart.destroy();
+      }
+
+      const verticalScaleHint = parseFloat(verticalScaleHintInput.value) || 1;
+
+      profileChart = new Chart(chartCanvas, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label: "高程 (m)",
+            data,
+            borderWidth: 2,
+            pointRadius: 1,
+            tension: 0.08,
+            spanGaps: true
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: "index",
+            intersect: false
+          },
+          plugins: {
+            title: {
+              display: true,
+              text: "多段折線高程剖面圖"
+            },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  const i = ctx.dataIndex;
+                  const row = results[i];
+                  return `距離=${row.distance.toFixed(2)} m, 高程=${row.z === null ? "NoData" : row.z.toFixed(3) + " m"}, 線段=${row.segment}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              title: {
+                display: true,
+                text: "累積距離 (m)"
+              }
+            },
+            y: {
+              title: {
+                display: true,
+                text: "高程 (m)"
+              },
+              grace: (10 * verticalScaleHint) + "%"
+            }
+          }
+        }
+      });
+    }
+
+    function exportCSV() {
+      if (!profileData || profileData.length === 0) {
+        alert("目前沒有剖面資料可匯出");
+        return;
+      }
+
+      const rows = [["id", "segment", "distance_m", "x", "y", "elevation_m"]];
+      for (const r of profileData) {
+        rows.push([r.id, r.segment, r.distance, r.x, r.y, r.z]);
+      }
+
+      const csvContent = rows.map(row => row.join(",")).join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "polyline_profile.csv";
+      a.click();
+
+      URL.revokeObjectURL(url);
+    }
+
+    function setViewMode(mode) {
+      rightArea.classList.remove("dem-only", "chart-only", "split-view");
+
+      if (mode === "dem") {
+        rightArea.classList.add("dem-only");
+      } else if (mode === "chart") {
+        rightArea.classList.add("chart-only");
+      } else {
+        rightArea.classList.add("split-view");
+      }
+
+      setTimeout(() => {
+        if (profileChart) profileChart.resize();
+      }, 260);
+    }
+
+    function togglePanel(panel, button, collapseText, expandText) {
+      panel.classList.toggle("collapsed");
+      const isCollapsed = panel.classList.contains("collapsed");
+      button.textContent = isCollapsed ? expandText : collapseText;
+
+      setTimeout(() => {
+        if (profileChart) profileChart.resize();
+      }, 260);
+    }
+
+    fileInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      try {
+        await loadGeoTIFF(file);
+      } catch (err) {
+        console.error(err);
+        alert("GeoTIFF 載入失敗，請檢查檔案格式");
+        setStatus("GeoTIFF 載入失敗");
+      }
+    });
+
+    startDrawBtn.addEventListener("click", () => {
+      if (!dem.values) {
+        alert("請先載入 DEM");
+        return;
+      }
+      drawingMode = true;
+      polylinePoints = [];
+      isClosed = false;
+      hoverPoint = null;
+      profileData = [];
+      resetSummary();
+      if (profileChart) {
+        profileChart.destroy();
+        profileChart = null;
+      }
+      drawCanvas();
+      setStatus("請在 DEM 上連續點選多個節點，完成後按「完成折線」");
+      setViewMode("dem");
+    });
+
+    finishDrawBtn.addEventListener("click", () => {
+      if (polylinePoints.length < 2) {
+        alert("至少需要兩個點");
+        return;
+      }
+      drawingMode = false;
+      hoverPoint = null;
+      drawCanvas();
+      setStatus("折線完成，可按「產生剖面圖」");
+    });
+
+    undoBtn.addEventListener("click", () => {
+      if (polylinePoints.length > 0) {
+        polylinePoints.pop();
+        isClosed = false;
+        drawCanvas();
+        setStatus("已復原最後一個點");
+      }
+    });
+
+    closeLineBtn.addEventListener("click", () => {
+      if (polylinePoints.length < 3) {
+        alert("至少三個點才能閉合");
+        return;
+      }
+      isClosed = true;
+      drawCanvas();
+      setStatus("已閉合折線");
+    });
+
+    clearBtn.addEventListener("click", () => {
+      polylinePoints = [];
+      isClosed = false;
+      drawingMode = false;
+      hoverPoint = null;
+      profileData = [];
+      resetSummary();
+      if (profileChart) {
+        profileChart.destroy();
+        profileChart = null;
+      }
+      drawCanvas();
+      setStatus("已清除折線與剖面");
+    });
+
+    profileBtn.addEventListener("click", () => {
+      try {
+        sampleProfileAlongPolyline();
+        setViewMode("chart");
+      } catch (err) {
+        console.error(err);
+        alert("產生剖面圖失敗");
+      }
+    });
+
+    csvBtn.addEventListener("click", exportCSV);
+
+    showDemOnlyBtn.addEventListener("click", () => setViewMode("dem"));
+    showChartOnlyBtn.addEventListener("click", () => setViewMode("chart"));
+    showSplitBtn.addEventListener("click", () => setViewMode("split"));
+
+    toggleViewerBtn.addEventListener("click", () => {
+      togglePanel(viewerPanel, toggleViewerBtn, "收合 DEM", "展開 DEM");
+    });
+
+    toggleChartBtn.addEventListener("click", () => {
+      togglePanel(chartPanel, toggleChartBtn, "收合剖面圖", "展開剖面圖");
+    });
+
+    canvas.addEventListener("click", (evt) => {
+      if (!drawingMode || !dem.values) return;
+      const pos = getCanvasMousePos(evt);
+      polylinePoints.push(pos);
+      isClosed = false;
+      drawCanvas();
+      setStatus(`已加入第 ${polylinePoints.length} 個節點`);
+    });
+
+    canvas.addEventListener("mousemove", (evt) => {
+      if (!drawingMode || !dem.values) return;
+      hoverPoint = getCanvasMousePos(evt);
+      drawCanvas();
+    });
+
+    canvas.addEventListener("dblclick", (evt) => {
+      evt.preventDefault();
+      if (drawingMode && polylinePoints.length >= 2) {
+        drawingMode = false;
+        hoverPoint = null;
+        drawCanvas();
+        setStatus("已用雙擊完成折線，可按「產生剖面圖」");
+      }
+    });
+
+    canvas.addEventListener("contextmenu", (evt) => {
+      evt.preventDefault();
+      if (drawingMode && polylinePoints.length >= 2) {
+        drawingMode = false;
+        hoverPoint = null;
+        drawCanvas();
+        setStatus("已用右鍵完成折線，可按「產生剖面圖」");
+      }
+    });
+  </script>
+</body>
+</html>
